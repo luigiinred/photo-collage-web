@@ -1,8 +1,8 @@
 import {
-  TEMPLATES, applyTemplate, clearContent, collectLeaves, defaultText, findNode, layoutTree,
+  TEMPLATES, applyTemplate, clearContent, collectLeaves, defaultText, findNode, layoutTree, pointInPoly, polyArea, tiltsOf,
   removeLeaf, splitLeaf, swapContent,
 } from './geometry.js';
-import { FONTS, chipRect, drawLeaf, drawOverlay, fontString, photoMetrics, rrPath, scaleRect } from './render.js';
+import { FONTS, chipRect, drawLeaf, drawOverlay, fontString, photoMetrics, polyPath, scaleCell, scaleRect } from './render.js';
 import { createColorField, closePicker } from './colorpicker.js';
 import { clamp, toCss } from './color.js';
 import { withDpi } from './export.js';
@@ -94,6 +94,7 @@ const imgFor = (l) => {
   const p = l.type === 'photo' ? photos.get(l.photoId) : null;
   return p ? { src: p.preview, w: p.w, h: p.h } : null;
 };
+const borderAt = (k, page = state.page) => ({ width: (page.border ?? 0) * k, color: page.borderColor ?? '#111111' });
 const isUsed = (id) => orderedLeaves().some((l) => l.type === 'photo' && l.photoId === id);
 
 let toastTimer = 0;
@@ -148,7 +149,7 @@ function render() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ensureFontsForPreview();
   const lay = pageLayout();
-  for (const { node, rect } of lay.leaves) drawLeaf(ctx, node, scaleRect(rect, ppi), radius * ppi, imgFor(node));
+  for (const item of lay.leaves) drawLeaf(ctx, item.node, scaleCell(item, ppi), radius * ppi, imgFor(item.node), borderAt(ppi));
   drawOverlay(ctx, lay, {
     ppi, dpr: view.dpr, radius: radius * ppi, gap, isEmpty: isEmptyLeaf, selectedId: state.selectedId,
     dropId: ui.dropId, hoverDivider: ui.hoverDivider, activeDivider: ui.activeDivider, pointerInside: ui.pointerInside,
@@ -162,29 +163,56 @@ function toInches(e) {
   return { x: (e.clientX - r.left) / view.cssPerIn, y: (e.clientY - r.top) / view.cssPerIn };
 }
 
-function hitTest(p, touch, allowChip = true) {
+function distToSeg(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
+  const t = L ? clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / L, 0, 1) : 0;
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+}
+
+function hitTest(p, touch, interactive = true) {
   const lay = pageLayout();
   const px = p.x * view.cssPerIn, py = p.y * view.cssPerIn;
   const sel = lay.leaves.find((l) => l.node.id === state.selectedId);
-  if (allowChip && sel && !isEmptyLeaf(sel.node)) {
-    const c = chipRect(scaleRect(sel.rect, view.cssPerIn));
+  if (interactive && sel && !isEmptyLeaf(sel.node)) {
+    const c = chipRect(scaleRect(sel.inner, view.cssPerIn));
     const slop = touch ? 8 : 2;
     if (px >= c.x - slop && px <= c.x + c.w + slop && py >= c.y - slop && py <= c.y + c.h + slop) return { kind: 'chip', leaf: sel };
   }
-  const tol = (touch ? 16 : 7) / view.cssPerIn;
-  for (const d of lay.dividers) {
-    const along = d.horiz ? p.x : p.y;
-    const across = d.horiz ? p.y : p.x;
-    if (Math.abs(along - d.center) <= Math.max(tol, state.page.gap / 2) && across >= d.from && across <= d.to) return { kind: 'divider', div: d };
+  if (interactive) {
+    const endTol = (touch ? 20 : 10) / view.cssPerIn;
+    for (const d of lay.dividers) {
+      for (const end of ['a', 'b']) if (Math.hypot(p.x - d[end].x, p.y - d[end].y) <= endTol) return { kind: 'tilt', div: d, end };
+    }
+    const tol = (touch ? 16 : 7) / view.cssPerIn;
+    for (const d of lay.dividers) if (distToSeg(p, d.a, d.b) <= Math.max(tol, state.page.gap / 2)) return { kind: 'divider', div: d };
   }
-  const leaf = lay.leaves.find(({ rect: r }) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+  const leaf = lay.leaves.find((l) => pointInPoly(p, l.poly));
   return leaf ? { kind: 'leaf', leaf } : { kind: 'none' };
+}
+
+const layoutValid = () => pageLayout().leaves.every((l) => l.poly.length >= 3 && polyArea(l.poly) > 0.15);
+
+function applyDividerChange(drag, wi, tilt) {
+  const d = drag.div;
+  const tilts = tiltsOf(d.node);
+  const sum = drag.w0[d.index] + drag.w0[d.index + 1];
+  d.node.weights[d.index] = wi;
+  d.node.weights[d.index + 1] = sum - wi;
+  if (tilt != null) tilts[d.index] = tilt;
+  if (layoutValid()) {
+    drag.last = { w: [...d.node.weights], t: [...tilts] };
+  } else {
+    d.node.weights = [...drag.last.w];
+    d.node.tilts = [...drag.last.t];
+  }
 }
 
 // Pointer interaction ------------------------------------------------------
 let drag = null;
 const pointers = new Map();
 let lastTap = { id: null, wasSelected: false };
+let lastTouchTap = { time: 0, x: 0, y: 0, id: null };
+let lastPointerType = 'mouse';
 
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -201,15 +229,27 @@ canvas.addEventListener('pointerdown', (e) => {
   if (pointers.size > 1) return;
 
   const touch = e.pointerType !== 'mouse';
+  lastPointerType = e.pointerType;
   const p = toInches(e);
   const hit = hitTest(p, touch);
   const start = { x: e.clientX, y: e.clientY };
+  const now = performance.now();
+  const second = touch && now - lastTouchTap.time < 320 && Math.hypot(e.clientX - lastTouchTap.x, e.clientY - lastTouchTap.y) < 40;
+  if (second && hit.kind !== 'none' && hit.kind !== 'divider' && hit.kind !== 'tilt') {
+    const leaf = leafById(lastTouchTap.id);
+    if (leaf && imgFor(leaf)) {
+      lastTouchTap.time = 0;
+      drag = { kind: 'onezoom', leaf, zoom0: leaf.zoom, moved: false, start };
+      return;
+    }
+  }
   if (hit.kind === 'chip') {
     drag = { kind: 'swap', leafId: hit.leaf.node.id, moved: false, start };
     canvas.style.cursor = 'grabbing';
-  } else if (hit.kind === 'divider') {
+  } else if (hit.kind === 'divider' || hit.kind === 'tilt') {
     const d = hit.div;
-    drag = { kind: 'divider', div: d, startP: p, w0: [...d.node.weights], moved: false, start };
+    const t0 = [...tiltsOf(d.node)];
+    drag = { kind: hit.kind, div: d, end: hit.end, startP: p, w0: [...d.node.weights], last: { w: [...d.node.weights], t: t0 }, moved: false, start };
     ui.activeDivider = { node: d.node, index: d.index };
   } else if (hit.kind === 'leaf') {
     const leaf = hit.leaf.node;
@@ -236,10 +276,11 @@ canvas.addEventListener('pointermove', (e) => {
   if (!drag) {
     if (touch) return;
     const hit = hitTest(toInches(e), false);
-    const hd = hit.kind === 'divider' ? { node: hit.div.node, index: hit.div.index } : null;
+    const hd = hit.kind === 'divider' || hit.kind === 'tilt' ? { node: hit.div.node, index: hit.div.index } : null;
     const changed = (hd?.node !== ui.hoverDivider?.node) || (hd?.index !== ui.hoverDivider?.index);
     ui.hoverDivider = hd;
-    canvas.style.cursor = hit.kind === 'divider' ? (hit.div.horiz ? 'col-resize' : 'row-resize')
+    canvas.style.cursor = hit.kind === 'tilt' ? 'grab'
+      : hit.kind === 'divider' ? (hit.div.horiz ? 'col-resize' : 'row-resize')
       : hit.kind === 'chip' ? 'grab' : hit.kind === 'leaf' && imgFor(hit.leaf.node) ? 'grab' : 'default';
     if (changed) requestRender();
     return;
@@ -247,7 +288,11 @@ canvas.addEventListener('pointermove', (e) => {
 
   if (Math.hypot(e.clientX - drag.start?.x, e.clientY - drag.start?.y) > 4) drag.moved = true;
 
-  if (drag.kind === 'pinch' && pointers.size >= 2) {
+  if (drag.kind === 'onezoom') {
+    drag.leaf.zoom = clamp(drag.zoom0 * Math.exp((e.clientY - drag.start.y) / 160), 1, 6);
+    renderCellPanelValuesSoon();
+    requestRender();
+  } else if (drag.kind === 'pinch' && pointers.size >= 2) {
     const [a, b] = [...pointers.values()];
     const dist = Math.hypot(a.x - b.x, a.y - b.y);
     drag.leaf.zoom = clamp((drag.zoom0 * dist) / drag.dist, 1, 6);
@@ -267,9 +312,22 @@ canvas.addEventListener('pointermove', (e) => {
     const min = d.total * 0.05;
     let wi = clamp(drag.w0[d.index] + delta, min, sum - min);
     if (Math.abs(wi - sum / 2) < d.total * 0.02) wi = sum / 2;
-    d.node.weights[d.index] = wi;
-    d.node.weights[d.index + 1] = sum - wi;
+    applyDividerChange(drag, wi, null);
     requestRender();
+  } else if (drag.kind === 'tilt') {
+    const d = drag.div, p = toInches(e);
+    const uv = (pt) => (d.horiz ? { u: pt.x, v: pt.y } : { u: pt.y, v: pt.x });
+    const O = uv(drag.end === 'a' ? d.b : d.a), E = uv(drag.end === 'a' ? d.a : d.b), P = uv(p);
+    if (Math.abs(E.v - O.v) > 1e-6) {
+      let t = clamp(-(P.u - O.u) / (E.v - O.v), -1.2, 1.2);
+      if (Math.abs(t) < 0.025) t = 0;
+      const c = O.u + t * (O.v - d.mid);
+      const sum = drag.w0[d.index] + drag.w0[d.index + 1];
+      const min = d.total * 0.05;
+      const wi = clamp(drag.w0[d.index] + (c - d.center) / (d.span / d.total), min, sum - min);
+      applyDividerChange(drag, wi, t);
+      requestRender();
+    }
   } else if (drag.kind === 'swap') {
     const hit = hitTest(toInches(e), touch, false);
     const id = hit.kind === 'leaf' && hit.leaf.node.id !== drag.leafId ? hit.leaf.node.id : null;
@@ -287,6 +345,17 @@ function endPointer(e) {
   const d = drag;
   drag = null;
   canvas.style.cursor = 'default';
+  if (d.kind === 'onezoom') {
+    if (!d.moved) d.leaf.zoom = d.leaf.zoom > 1.05 ? 1 : 2;
+    if (d.leaf.zoom === 1) Object.assign(d.leaf, { ox: 0, oy: 0 });
+    commit();
+    renderCellPanelValuesSoon();
+    requestRender();
+    return;
+  }
+  if (e.pointerType !== 'mouse' && !d.moved && e.type === 'pointerup' && (d.kind === 'pan' || d.kind === 'tap')) {
+    lastTouchTap = { time: performance.now(), x: e.clientX, y: e.clientY, id: d.leaf.id };
+  }
   ui.activeDivider = null;
   if (d.kind === 'swap' && ui.dropId && e.type === 'pointerup') {
     const a = leafById(d.leafId), b = leafById(ui.dropId);
@@ -306,6 +375,7 @@ canvas.addEventListener('pointerenter', () => { ui.pointerInside = true; request
 canvas.addEventListener('pointerleave', () => { ui.pointerInside = false; ui.hoverDivider = null; requestRender(); });
 
 canvas.addEventListener('dblclick', (e) => {
+  if (lastPointerType !== 'mouse') return;
   const hit = hitTest(toInches(e), false, false);
   if (hit.kind !== 'leaf') return;
   const leaf = hit.leaf.node;
@@ -538,10 +608,11 @@ function syncPageControls() {
   $('#paper').value = PAPER.some(([w, h]) => `${w}x${h}` === key) ? key : 'custom';
   $('#page-w').value = p.w;
   $('#page-h').value = p.h;
-  for (const k of ['margin', 'gap', 'radius']) {
-    $(`#${k}`).value = p[k];
-    $(`#${k}-out`).textContent = fmtIn(p[k]);
+  for (const k of ['margin', 'gap', 'radius', 'border']) {
+    $(`#${k}`).value = p[k] ?? 0;
+    $(`#${k}-out`).textContent = fmtIn(p[k] ?? 0);
   }
+  borderField.set(p.borderColor ?? '#111111');
   $('#dpi').value = String(p.dpi);
   $('#page-summary').textContent = `${p.w} × ${p.h} in`;
   bgField.set(p.bg);
@@ -557,7 +628,7 @@ function setPaper(w, h) {
   commit();
 }
 
-let bgField;
+let bgField, borderField;
 function initPageControls() {
   buildPaperOptions();
   bgField = createColorField({
@@ -582,7 +653,13 @@ function initPageControls() {
   dimInput('#page-w', 'w');
   dimInput('#page-h', 'h');
   $('#swap-orient').addEventListener('click', () => setPaper(state.page.h, state.page.w));
-  for (const k of ['margin', 'gap', 'radius']) {
+  borderField = createColorField({
+    value: '#111111', label: 'Border color',
+    onInput: (v) => { state.page.borderColor = v; requestRender(); },
+    onChange: () => commit(),
+  });
+  $('#border-color-slot').append(borderField.el);
+  for (const k of ['margin', 'gap', 'radius', 'border']) {
     $(`#${k}`).addEventListener('input', (e) => {
       state.page[k] = +e.target.value;
       $(`#${k}-out`).textContent = fmtIn(state.page[k]);
@@ -617,6 +694,14 @@ function updateExportInfo() {
     (clamped ? ` — reduced from ${state.page.dpi} DPI, the most this ${IS_IOS ? 'device' : 'browser'} can render.` : '');
 }
 
+function drawLayoutThumb(g, tpl, rect, gap) {
+  for (const { node, poly } of layoutTree(tpl.build(), rect, gap).leaves) {
+    g.fillStyle = node.type === 'text' ? '#8f93e8' : tpl.comic ? '#b3b7ef' : '#c3c6f3';
+    polyPath(g, poly, 0);
+    g.fill();
+  }
+}
+
 // Templates --------------------------------------------------------------------
 function initTemplates() {
   const grid = $('#templates');
@@ -624,13 +709,7 @@ function initTemplates() {
     const c = document.createElement('canvas');
     c.width = 60; c.height = 75;
     const g = c.getContext('2d');
-    const { leaves } = layoutTree(tpl.build(), { x: 3, y: 3, w: 54, h: 69 }, 3);
-    for (const { node, rect } of leaves) {
-      g.fillStyle = node.type === 'text' ? '#8f93e8' : '#c9ccf5';
-      g.beginPath();
-      g.roundRect?.(rect.x, rect.y, rect.w, rect.h, 2) ?? g.rect(rect.x, rect.y, rect.w, rect.h);
-      g.fill();
-    }
+    drawLayoutThumb(g, tpl, { x: 3, y: 3, w: 54, h: 69 }, 3);
     grid.append(el('button', { class: 'tpl', type: 'button', title: tpl.name, 'aria-label': tpl.name, onClick: () => {
       state.root = applyTemplate(state.root, tpl);
       if (!findNode(state.root, state.selectedId)) state.selectedId = null;
@@ -787,15 +866,16 @@ async function exportImage() {
     g.fillStyle = toCss(bg);
     g.fillRect(0, 0, W, H);
     const lay = layoutTree(state.root, { x: margin, y: margin, w: w - margin * 2, h: h - margin * 2 }, gap);
-    for (const { node, rect } of lay.leaves) {
-      const r = scaleRect(rect, dpi);
+    for (const item of lay.leaves) {
+      const { node } = item;
+      const cell = scaleCell(item, dpi);
       const p = node.type === 'photo' ? photos.get(node.photoId) : null;
       if (p) {
         const full = await decodeFull(p.file);
-        drawLeaf(g, node, r, radius * dpi, full);
+        drawLeaf(g, node, cell, radius * dpi, full, borderAt(dpi));
         full.close();
       } else {
-        drawLeaf(g, node, r, radius * dpi, null);
+        drawLeaf(g, node, cell, radius * dpi, null, borderAt(dpi));
       }
     }
     let blob = await new Promise((res) => c.toBlob(res, mime, exportSettings.quality));
@@ -878,7 +958,7 @@ function renderThumb() {
   g.fillRect(0, 0, c.width, c.height);
   g.fillStyle = toCss(bg);
   g.fillRect(0, 0, c.width, c.height);
-  for (const { node, rect } of pageLayout().leaves) drawLeaf(g, node, scaleRect(rect, ppi), radius * ppi, imgFor(node));
+  for (const item of pageLayout().leaves) drawLeaf(g, item.node, scaleCell(item, ppi), radius * ppi, imgFor(item.node), borderAt(ppi));
   return c.toDataURL('image/jpeg', 0.82);
 }
 
@@ -985,12 +1065,12 @@ async function openProject(id) {
 
 // Guided flow ------------------------------------------------------------------------
 const wizard = $('#wizard');
-const wz = { step: 1, w: 8, h: 10, tpl: 'grid-2x2', recs: [], margin: 0.24, gap: 0.1, radius: 0, bg: '#ffffff' };
+const wz = { step: 1, maxStep: 1, w: 8, h: 10, tpl: 'grid-2x2', recs: [], margin: 0.24, gap: 0.1, radius: 0, bg: '#ffffff', border: 0, borderColor: '#111111', borderTouched: false, spacingFor: null };
 const defaultSpacing = (w, h) => { const m = Math.min(w, h); return { margin: Math.min(0.5, Math.round(m * 3) / 100), gap: Math.round(m * 1.2) / 100 }; };
 const SIZE_LABELS = { '4x6': 'Standard print', '6x4': 'Standard print', '5x7': 'Small frame', '7x5': 'Small frame', '8x10': 'Classic frame', '10x8': 'Classic frame', '8x8': 'Square', '11x14': 'Large frame', '14x11': 'Large frame', '16x20': 'Poster', '20x16': 'Poster' };
 
 function startWizard() {
-  Object.assign(wz, { step: 1, recs: [], radius: 0, bg: '#ffffff' });
+  Object.assign(wz, { step: 1, maxStep: 1, recs: [], radius: 0, bg: '#ffffff', border: 0, borderColor: '#111111', borderTouched: false, spacingFor: null });
   photos.clear();
   wizard.hidden = false;
   renderWizard();
@@ -1003,7 +1083,13 @@ function renderWizard() {
   const titles = ['Pick a print size', 'Set spacing and background', 'Choose a layout', 'Add your photos'];
   $('#wz-title').textContent = titles[wz.step - 1];
   $('#wz-steps').innerHTML = '';
-  ['Size', 'Style', 'Layout', 'Photos'].forEach((label, i) => $('#wz-steps').append(el('li', { class: i + 1 === wz.step ? 'on' : i + 1 < wz.step ? 'done' : '' }, `${i + 1}. ${label}`)));
+  ['Size', 'Style', 'Layout', 'Photos'].forEach((label, i) => {
+    const n = i + 1;
+    const cls = n === wz.step ? 'on' : n <= wz.maxStep ? 'done' : '';
+    const text = `${n}. ${label}`;
+    $('#wz-steps').append(el('li', { class: cls },
+      n !== wz.step && n <= wz.maxStep ? el('button', { type: 'button', onClick: () => goStep(n) }, text) : text));
+  });
   $('#wz-back').hidden = wz.step === 1;
   $('#wz-skip').hidden = wz.step !== 4;
   $('#wz-next').textContent = wz.step === 4 ? (wz.recs.length ? 'Create collage' : 'Create empty collage') : 'Next';
@@ -1032,15 +1118,25 @@ function renderWizard() {
       prev.style.width = `${prev.width / dpr}px`; prev.style.height = `${prev.height / dpr}px`;
       const g = prev.getContext('2d');
       g.fillStyle = toCss(wz.bg); g.fillRect(0, 0, prev.width, prev.height);
-      const lay = layoutTree(TEMPLATES.find((t) => t.id === 'grid-2x2').build(), { x: wz.margin, y: wz.margin, w: wz.w - wz.margin * 2, h: wz.h - wz.margin * 2 }, wz.gap);
-      g.fillStyle = '#b7bbf0';
-      for (const { rect } of lay.leaves) { rrPath(g, rect.x * k * dpr, rect.y * k * dpr, rect.w * k * dpr, rect.h * k * dpr, wz.radius * k * dpr); g.fill(); }
+      const tpl = TEMPLATES.find((t) => t.id === wz.tpl) ?? TEMPLATES.find((t) => t.id === 'grid-2x2');
+      const lay = layoutTree(tpl.build(), { x: wz.margin, y: wz.margin, w: wz.w - wz.margin * 2, h: wz.h - wz.margin * 2 }, wz.gap);
+      const px = k * dpr;
+      for (const item of lay.leaves) {
+        const cell = scaleCell(item, px);
+        polyPath(g, cell.poly, wz.radius * px);
+        g.fillStyle = '#b7bbf0';
+        g.fill();
+        drawLeaf(g, { type: 'empty' }, cell, wz.radius * px, null, { width: wz.border * px, color: wz.borderColor });
+      }
     };
     const bg = createColorField({ value: wz.bg, label: 'Background color', onInput: (v) => { wz.bg = v; drawPrev(); }, onChange: (v) => { wz.bg = v; drawPrev(); } });
-    const sl = (label, key, max) => sliderRow(label, { min: 0, max, step: 0.01, value: wz[key], format: fmtIn }, (v) => { wz[key] = v; drawPrev(); });
+    const sl = (label, key, max, step = 0.01) => sliderRow(label, { min: 0, max, step, value: wz[key], format: fmtIn }, (v) => { wz[key] = v; if (key === 'border') wz.borderTouched = true; drawPrev(); });
+    const bc = createColorField({ value: wz.borderColor, label: 'Border color', onInput: (v) => { wz.borderColor = v; drawPrev(); }, onChange: (v) => { wz.borderColor = v; drawPrev(); } });
     body.append(el('div', { class: 'style-wrap' },
       el('div', {}, sl('Outer margin', 'margin', 1), sl('Gap between', 'gap', 0.6), sl('Corner radius', 'radius', 0.6),
         el('div', { class: 'row center' }, el('span', { class: 'lbl' }, 'Background'), bg.el),
+        sl('Panel border', 'border', 0.12, 0.005),
+        el('div', { class: 'row center' }, el('span', { class: 'lbl' }, 'Border color'), bc.el),
         el('p', { class: 'muted' }, 'You can change these any time from Page settings in the editor.')),
       el('div', { class: 'style-preview' }, prev)));
     drawPrev();
@@ -1054,11 +1150,7 @@ function renderWizard() {
       const g = c.getContext('2d');
       g.scale(2, 2);
       g.fillStyle = '#fff'; g.fillRect(0, 0, tw2, th);
-      const { leaves } = layoutTree(tpl.build(), { x: 4, y: 4, w: tw2 - 8, h: th - 8 }, 3);
-      for (const { node, rect } of leaves) {
-        g.fillStyle = node.type === 'text' ? '#8f93e8' : '#c3c6f3';
-        g.fillRect(rect.x, rect.y, rect.w, rect.h);
-      }
+      drawLayoutThumb(g, tpl, { x: 4, y: 4, w: tw2 - 8, h: th - 8 }, 3);
       g.strokeStyle = '#d4d6de'; g.strokeRect(0.5, 0.5, tw2 - 1, th - 1);
       grid.append(el('button', { class: 'lay-card', type: 'button', 'aria-pressed': String(wz.tpl === tpl.id), onClick: () => { wz.tpl = tpl.id; renderWizard(); } }, c, el('small', {}, tpl.name)));
     }
@@ -1086,7 +1178,8 @@ async function finishWizard() {
   const { w, h } = wz;
   const tpl = TEMPLATES.find((t) => t.id === wz.tpl);
   Object.assign(project, { id: uuid(), name: `${w} × ${h} collage`, created: Date.now() });
-  state.page = { w, h, dpi: 300, margin: wz.margin, gap: wz.gap, radius: wz.radius, bg: wz.bg };
+  const border = tpl.comic && !wz.borderTouched ? 0.03 : wz.border;
+  state.page = { w, h, dpi: 300, margin: wz.margin, gap: wz.gap, radius: wz.radius, bg: wz.bg, border, borderColor: wz.borderColor };
   state.root = tpl.build();
   state.selectedId = null;
   $('#project-name').value = project.name;
@@ -1100,12 +1193,18 @@ async function finishWizard() {
   await saveNow();
 }
 
-$('#wz-next').addEventListener('click', () => {
-  if (wz.step === 1) Object.assign(wz, defaultSpacing(wz.w, wz.h));
-  if (wz.step < 4) { wz.step++; renderWizard(); } else finishWizard();
-});
+function goStep(n) {
+  if (wz.step === 1) {
+    const key = `${wz.w}x${wz.h}`;
+    if (wz.spacingFor !== key) { Object.assign(wz, defaultSpacing(wz.w, wz.h)); wz.spacingFor = key; }
+  }
+  wz.step = n;
+  wz.maxStep = Math.max(wz.maxStep, n);
+  renderWizard();
+}
+$('#wz-next').addEventListener('click', () => { if (wz.step < 4) goStep(wz.step + 1); else finishWizard(); });
 $('#wz-skip').addEventListener('click', () => { wz.recs = []; photos.clear(); finishWizard(); });
-$('#wz-back').addEventListener('click', () => { wz.step--; renderWizard(); });
+$('#wz-back').addEventListener('click', () => goStep(wz.step - 1));
 $('#wz-close').addEventListener('click', closeWizard);
 wizard.addEventListener('pointerdown', (e) => { if (e.target === wizard) closeWizard(); });
 for (const id of ['#new-collage', '#new-top', '#new-empty']) $(id).addEventListener('click', startWizard);

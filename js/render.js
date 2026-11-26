@@ -39,6 +39,26 @@ export function rrPath(ctx, x, y, w, h, r) {
 }
 
 export const scaleRect = (r, k) => ({ x: r.x * k, y: r.y * k, w: r.w * k, h: r.h * k });
+export const scaleCell = (c, k) => ({ rect: scaleRect(c.rect, k), inner: scaleRect(c.inner, k), poly: c.poly.map((p) => ({ x: p.x * k, y: p.y * k })) });
+
+export function polyPath(ctx, pts, r = 0) {
+  ctx.beginPath();
+  const n = pts.length;
+  if (n < 3) return;
+  if (!r) {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < n; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    return;
+  }
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  ctx.moveTo((pts[n - 1].x + pts[0].x) / 2, (pts[n - 1].y + pts[0].y) / 2);
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n], prev = pts[(i - 1 + n) % n];
+    ctx.arcTo(p.x, p.y, q.x, q.y, Math.max(0, Math.min(r, dist(p, q) / 2, dist(p, prev) / 2)));
+  }
+  ctx.closePath();
+}
 
 export function photoMetrics(leaf, rect, imgW, imgH) {
   const rot = ((leaf.rot % 360) + 360) % 360;
@@ -50,9 +70,10 @@ export function photoMetrics(leaf, rect, imgW, imgH) {
   return { s, dw: rw * s, dh: rh * s, rot };
 }
 
-function drawPhotoCell(ctx, leaf, r, radius, img) {
+function drawPhotoCell(ctx, leaf, cell, radius, img) {
+  const r = cell.rect;
   ctx.save();
-  rrPath(ctx, r.x, r.y, r.w, r.h, radius);
+  polyPath(ctx, cell.poly, radius);
   ctx.clip();
   if (alphaOf(leaf.bg) > 0) {
     ctx.fillStyle = toCss(leaf.bg);
@@ -136,15 +157,16 @@ function layoutText(ctx, t, innerW, innerH, short) {
   return { px: lo, lines: res.lines };
 }
 
-function drawTextCell(ctx, leaf, r, radius) {
+function drawTextCell(ctx, leaf, cell, radius) {
   const t = leaf.text;
   if (!t) return;
+  const r = cell.inner;
   ctx.save();
-  rrPath(ctx, r.x, r.y, r.w, r.h, radius);
+  polyPath(ctx, cell.poly, radius);
   ctx.clip();
   if (alphaOf(t.bg) > 0) {
     ctx.fillStyle = toCss(t.bg);
-    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.fillRect(cell.rect.x, cell.rect.y, cell.rect.w, cell.rect.h);
   }
   const short = Math.min(r.w, r.h);
   const pad = (short * t.pad) / 100;
@@ -169,9 +191,20 @@ function drawTextCell(ctx, leaf, r, radius) {
   ctx.restore();
 }
 
-export function drawLeaf(ctx, leaf, r, radius, img) {
-  if (leaf.type === 'text') drawTextCell(ctx, leaf, r, radius);
-  else if (leaf.type === 'photo' && img) drawPhotoCell(ctx, leaf, r, radius, img);
+export function drawLeaf(ctx, leaf, cell, radius, img, border) {
+  if (cell.poly.length < 3) return;
+  if (leaf.type === 'text') drawTextCell(ctx, leaf, cell, radius);
+  else if (leaf.type === 'photo' && img) drawPhotoCell(ctx, leaf, cell, radius, img);
+  if (border && border.width > 0) {
+    ctx.save();
+    polyPath(ctx, cell.poly, radius);
+    ctx.clip();
+    ctx.lineWidth = border.width * 2;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = toCss(border.color);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 // Preview-only overlay -------------------------------------------------
@@ -181,11 +214,13 @@ const ACCENT = '#5b5bd6';
 
 export function drawOverlay(ctx, lay, ui) {
   const d = ui.dpr;
-  for (const { node, rect } of lay.leaves) {
-    const r = scaleRect(rect, ui.ppi);
+  for (const item of lay.leaves) {
+    const { node } = item;
+    const c = scaleCell(item, ui.ppi);
+    if (c.poly.length < 3) continue;
     if (ui.isEmpty(node)) {
       ctx.save();
-      rrPath(ctx, r.x, r.y, r.w, r.h, ui.radius);
+      polyPath(ctx, c.poly, ui.radius);
       ctx.fillStyle = 'rgba(91,91,214,0.07)';
       ctx.fill();
       ctx.setLineDash([6 * d, 5 * d]);
@@ -193,12 +228,14 @@ export function drawOverlay(ctx, lay, ui) {
       ctx.strokeStyle = 'rgba(91,91,214,0.55)';
       ctx.stroke();
       ctx.setLineDash([]);
+      const r = c.inner;
       const s = Math.min(r.w, r.h);
-      if (s > 40 * d) {
+      if (s > 30 * d) {
         const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        const arm = Math.min(12 * d, s * 0.1);
+        const arm = Math.min(12 * d, s * 0.12);
         ctx.lineWidth = 2 * d;
         ctx.lineCap = 'round';
+        ctx.strokeStyle = 'rgba(91,91,214,0.7)';
         ctx.beginPath();
         ctx.moveTo(cx - arm, cy - arm * 0.6);
         ctx.lineTo(cx + arm, cy - arm * 0.6);
@@ -207,7 +244,7 @@ export function drawOverlay(ctx, lay, ui) {
         ctx.stroke();
         ctx.font = `${12 * d}px Inter, system-ui, sans-serif`;
         const label = 'Drop a photo or tap to add';
-        if (ctx.measureText(label).width < r.w - 12 * d && s > 110 * d) {
+        if (ctx.measureText(label).width < r.w - 12 * d && s > 90 * d) {
           ctx.fillStyle = 'rgba(60,60,140,0.8)';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -218,7 +255,7 @@ export function drawOverlay(ctx, lay, ui) {
     }
     if (ui.dropId === node.id) {
       ctx.save();
-      rrPath(ctx, r.x, r.y, r.w, r.h, ui.radius);
+      polyPath(ctx, c.poly, ui.radius);
       ctx.fillStyle = 'rgba(91,91,214,0.25)';
       ctx.fill();
       ctx.lineWidth = 3 * d;
@@ -230,22 +267,22 @@ export function drawOverlay(ctx, lay, ui) {
 
   const sel = lay.leaves.find((l) => l.node.id === ui.selectedId);
   if (sel) {
-    const r = scaleRect(sel.rect, ui.ppi);
+    const c = scaleCell(sel, ui.ppi);
     ctx.save();
-    rrPath(ctx, r.x, r.y, r.w, r.h, ui.radius);
+    polyPath(ctx, c.poly, ui.radius);
     ctx.lineWidth = 2.5 * d;
     ctx.strokeStyle = ACCENT;
     ctx.stroke();
     if (!ui.isEmpty(sel.node)) {
-      const c = chipRect(r, d);
-      rrPath(ctx, c.x, c.y, c.w, c.h, 7 * d);
+      const ch = chipRect(c.inner, d);
+      rrPath(ctx, ch.x, ch.y, ch.w, ch.h, 7 * d);
       ctx.fillStyle = ACCENT;
       ctx.fill();
       ctx.fillStyle = '#fff';
       for (let i = 0; i < 2; i++) {
         for (let j = 0; j < 3; j++) {
           ctx.beginPath();
-          ctx.arc(c.x + c.w / 2 + (i - 0.5) * 6 * d, c.y + c.h / 2 + (j - 1) * 6 * d, 1.7 * d, 0, Math.PI * 2);
+          ctx.arc(ch.x + ch.w / 2 + (i - 0.5) * 6 * d, ch.y + ch.h / 2 + (j - 1) * 6 * d, 1.7 * d, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -254,29 +291,44 @@ export function drawOverlay(ctx, lay, ui) {
   }
 
   for (const dv of lay.dividers) {
-    const active = ui.activeDivider && ui.activeDivider.node === dv.node && ui.activeDivider.index === dv.index;
-    const hover = ui.hoverDivider && ui.hoverDivider.node === dv.node && ui.hoverDivider.index === dv.index;
-    if (!active && !hover && !ui.pointerInside) continue;
-    const c = dv.center * ui.ppi;
-    const a = dv.from * ui.ppi, b = dv.to * ui.ppi;
-    const mid = (a + b) / 2;
-    const len = Math.min(40 * d, (b - a) * 0.6);
+    const same = (x) => x && x.node === dv.node && x.index === dv.index;
+    const active = same(ui.activeDivider), hover = same(ui.hoverDivider);
     const hot = active || hover;
+    if (!hot && !ui.pointerInside) continue;
+    const a = { x: dv.a.x * ui.ppi, y: dv.a.y * ui.ppi };
+    const b = { x: dv.b.x * ui.ppi, y: dv.b.y * ui.ppi };
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length < 1) continue;
+    const angle = Math.atan2(b.y - a.y, b.x - a.x);
     ctx.save();
     if (hot) {
-      ctx.fillStyle = 'rgba(91,91,214,0.3)';
-      const thick = Math.max(ui.gap * ui.ppi, 4 * d);
-      if (dv.horiz) ctx.fillRect(c - thick / 2, a, thick, b - a);
-      else ctx.fillRect(a, c - thick / 2, b - a, thick);
+      ctx.strokeStyle = 'rgba(91,91,214,0.3)';
+      ctx.lineWidth = Math.max(ui.gap * ui.ppi, 4 * d);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
     }
-    const w = 6 * d;
-    if (dv.horiz) rrPath(ctx, c - w / 2, mid - len / 2, w, len, 3 * d);
-    else rrPath(ctx, mid - len / 2, c - w / 2, len, w, 3 * d);
+    ctx.translate((a.x + b.x) / 2, (a.y + b.y) / 2);
+    ctx.rotate(angle);
+    const len = Math.min(40 * d, length * 0.4), w = 6 * d;
+    rrPath(ctx, -len / 2, -w / 2, len, w, 3 * d);
     ctx.fillStyle = hot ? ACCENT : 'rgba(30,30,50,0.35)';
     ctx.fill();
-    ctx.lineWidth = 1 * d;
+    ctx.lineWidth = d;
     ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.stroke();
     ctx.restore();
+    if (hot) {
+      for (const p of [a, b]) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 7 * d, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.lineWidth = 2.5 * d;
+        ctx.strokeStyle = ACCENT;
+        ctx.stroke();
+      }
+    }
   }
 }

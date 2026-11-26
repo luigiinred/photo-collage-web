@@ -86,7 +86,7 @@
       <div class="stage-inner" id="stage-inner">
         <canvas id="stage" tabindex="0" aria-label="Collage canvas"></canvas>
       </div>
-      <p class="stage-hint">Click a cell to edit · drag a photo to reposition · scroll to zoom · drag the gaps to resize · use the ⋮⋮ handle to swap cells</p>
+      <p class="stage-hint">Click a cell to edit · drag a photo to reposition · scroll to zoom · drag a gap to resize it, or its end dots to angle it · use the ⋮⋮ handle to swap cells</p>
     </section>
 
     <aside class="panel inspector" aria-label="Settings">
@@ -150,6 +150,8 @@
         <label class="row slider"><span class="lbl">Outer margin</span><input id="margin" type="range" min="0" max="1" step="0.01"><output id="margin-out"></output></label>
         <label class="row slider"><span class="lbl">Gap between</span><input id="gap" type="range" min="0" max="0.6" step="0.01"><output id="gap-out"></output></label>
         <label class="row slider"><span class="lbl">Corner radius</span><input id="radius" type="range" min="0" max="0.6" step="0.01"><output id="radius-out"></output></label>
+        <label class="row slider"><span class="lbl">Panel border</span><input id="border" type="range" min="0" max="0.12" step="0.005"><output id="border-out"></output></label>
+        <div class="row"><span class="lbl">Border color</span><span id="border-color-slot"></span></div>
         <div class="row"><span class="lbl">Background</span><span id="page-bg-slot"></span></div>
       </section>
       </div>
