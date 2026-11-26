@@ -35,7 +35,7 @@ export const leaf = (extra = {}) => ({
   ...extra,
 });
 
-export const textLeaf = (value = 'Caption') => leaf({ type: 'text', text: { ...defaultText(), value } });
+export const textLeaf = (value = 'Add a caption') => leaf({ type: 'text', text: { ...defaultText(), value } });
 
 export const split = (dir, children, weights, tilts) => ({
   id: newId(),

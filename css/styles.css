@@ -341,3 +341,21 @@ body[data-view=editor] .home-only, body[data-view=editor] .home { display: none 
 .install-hint { display: flex; align-items: center; gap: 12px; justify-content: space-between; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 12px; line-height: 1.5; }
 .install-hint svg { vertical-align: -3px; }
 @media (display-mode: standalone) { .install-hint { display: none !important; } }
+
+/* Native feel on touch devices */
+html { -webkit-text-size-adjust: 100%; background-color: var(--bg); }
+body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+button, .thumb, .tpl, .size-card, .lay-card, .project-thumb, #stage { touch-action: manipulation; }
+.topbar, .mtabs, .cellbar, .tray, .btn, .seg, .project-card, .wz-steps { -webkit-user-select: none; user-select: none; }
+button img, .thumb img, .project-thumb img { -webkit-touch-callout: none; }
+.brand-icon { display: block; border-radius: 7px; }
+.topbar { background-color: #ffffff; }
+@media (max-width: 960px) {
+  /* Safari tints its status bar and toolbar from solid fixed elements at the screen edges. */
+  body[data-view=editor] .topbar { position: fixed; top: 0; left: 0; right: 0; }
+  body[data-view=editor] .app { margin-top: calc(var(--top) + env(safe-area-inset-top)); }
+  body[data-view=home] .topbar { position: fixed; top: 0; left: 0; right: 0; }
+  body[data-view=home] .home { padding-top: calc(var(--top) + env(safe-area-inset-top)); }
+  .tray { background-color: #ffffff; }
+  body:not([data-sheet]) .inspector { display: none; }
+}

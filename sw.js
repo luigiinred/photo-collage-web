@@ -1,6 +1,6 @@
-const CACHE = 'collage-v1';
+const CACHE = 'collage-v2';
 const SHELL = [
-  './', './index.html', './manifest.webmanifest', './css/styles.css',
+  './', './index.html', './favicon.ico', './manifest.webmanifest', './css/styles.css',
   './js/app.js', './js/color.js', './js/colorpicker.js', './js/db.js', './js/export.js', './js/geometry.js', './js/render.js',
   './icons/icon.svg', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png',
 ];

@@ -475,7 +475,7 @@ async function addFiles(fileList) {
 function assignPhoto(leafId, photoId) {
   const l = leafById(leafId);
   if (!l) return;
-  Object.assign(l, { type: 'photo', photoId, zoom: 1, ox: 0, oy: 0, rot: 0, text: null });
+  Object.assign(l, { type: 'photo', photoId, zoom: 1, ox: 0, oy: 0, rot: 0 });
 }
 
 function placePhotos(records, startLeafId) {
@@ -532,7 +532,7 @@ function renderTray() {
       el('button', { class: 'x', type: 'button', 'aria-label': `Remove ${p.name}`, onClick: (e) => {
         e.stopPropagation();
         p.removed = true;
-        for (const l of orderedLeaves()) if (l.photoId === p.id) clearContent(l);
+        for (const l of orderedLeaves()) if (l.photoId === p.id) { if (l.type === 'photo') clearContent(l); else l.photoId = null; }
         renderTray(); renderCellPanel(); requestRender(); commit();
       } }, '×'));
     t.addEventListener('dragstart', (e) => {
@@ -781,6 +781,17 @@ function updateResolutionBadge() {
   badge.textContent = `${ppi} PPI in print${ppi < 150 ? ' · may look soft' : ''}`;
 }
 
+function toCaption(leaf) {
+  leaf.type = 'text';
+  leaf.text ??= { ...defaultText(), value: 'Add a caption' };
+}
+function toPhoto(leaf) {
+  if (leaf.photoId && photos.has(leaf.photoId)) { leaf.type = 'photo'; return true; }
+  openFilePicker(leaf.id);
+  return false;
+}
+const isReferenced = (id) => orderedLeaves().some((l) => l.photoId === id);
+
 function renderCellBar(leaf) {
   const bar = $('#cellbar');
   bar.innerHTML = '';
@@ -792,14 +803,15 @@ function renderCellBar(leaf) {
   const multiple = orderedLeaves().length > 1;
   const split = (dir) => { const r = splitLeaf(state.root, leaf.id, dir); state.root = r.root; state.selectedId = r.newId; change(); };
   if (hasPhoto) {
-    bar.append(btn('Adjust…', () => openSheet('edit'), 'btn primary'), btn('Replace', () => openFilePicker(leaf.id)),
+    bar.append(btn('Adjust…', () => openSheet('edit'), 'btn primary'), btn('Caption', () => { toCaption(leaf); change(); }), btn('Replace', () => openFilePicker(leaf.id)),
       btn('⟳ Rotate', () => { leaf.rot = (leaf.rot + 90) % 360; change(); }),
       btn(leaf.fit === 'fit' ? 'Fill' : 'Fit', () => { leaf.fit = leaf.fit === 'fit' ? 'fill' : 'fit'; change(); }));
   } else if (leaf.type === 'text') {
-    bar.append(btn('Edit text…', () => { openSheet('edit'); setTimeout(() => $('#cell-body textarea')?.focus(), 250); }, 'btn primary'));
+    bar.append(btn('Edit caption…', () => { openSheet('edit'); setTimeout(() => $('#cell-body textarea')?.focus(), 250); }, 'btn primary'),
+      btn(photos.has(leaf.photoId) ? 'Back to photo' : 'Photo', () => { if (toPhoto(leaf)) change(); }));
   } else {
     bar.append(btn('+ Photo', () => openFilePicker(leaf.id), 'btn primary'),
-      btn('+ Text', () => { Object.assign(leaf, { type: 'text', photoId: null, text: leaf.text ?? defaultText() }); change(); }));
+      btn('+ Caption', () => { toCaption(leaf); change(); }));
   }
   bar.append(btn('Split ↔', () => split('h')), btn('Split ↕', () => split('v')));
   if (leaf.type !== 'empty') bar.append(btn('Clear', () => { clearContent(leaf); change(); }));
@@ -819,9 +831,13 @@ function renderCellPanel() {
   const change = () => { renderCellPanel(); requestRender(); renderTray(); commit(); };
   const multiple = orderedLeaves().length > 1;
 
+  body.append(el('div', { class: 'row center' },
+    segmented([['photo', 'Photo'], ['text', 'Caption']], leaf.type === 'empty' ? null : leaf.type, (v) => {
+      if (v === 'text') { toCaption(leaf); change(); } else if (toPhoto(leaf)) change();
+    }),
+    leaf.type === 'text' && leaf.photoId && photos.has(leaf.photoId) && el('span', { class: 'muted', style: 'margin:0' }, 'Photo kept underneath')));
   body.append(el('div', { class: 'btn-row' },
-    el('button', { class: 'btn', type: 'button', onClick: () => openFilePicker(leaf.id) }, leaf.type === 'photo' && photos.has(leaf.photoId) ? 'Replace photo' : '+ Photo'),
-    leaf.type !== 'text' && el('button', { class: 'btn', type: 'button', onClick: () => { Object.assign(leaf, { type: 'text', photoId: null, text: leaf.text ?? defaultText() }); change(); } }, '+ Text'),
+    leaf.type !== 'text' && el('button', { class: 'btn', type: 'button', onClick: () => openFilePicker(leaf.id) }, leaf.type === 'photo' && photos.has(leaf.photoId) ? 'Replace photo' : '+ Photo'),
     el('button', { class: 'btn', type: 'button', title: 'Split side by side', onClick: () => { const r = splitLeaf(state.root, leaf.id, 'h'); state.root = r.root; selectLeaf(r.newId); change(); } }, 'Split ↔'),
     el('button', { class: 'btn', type: 'button', title: 'Split top and bottom', onClick: () => { const r = splitLeaf(state.root, leaf.id, 'v'); state.root = r.root; selectLeaf(r.newId); change(); } }, 'Split ↕'),
     leaf.type !== 'empty' && el('button', { class: 'btn', type: 'button', onClick: () => { clearContent(leaf); change(); } }, 'Clear'),
@@ -1010,7 +1026,7 @@ async function saveNow() {
   if (!project.id || !storageOk) return;
   try {
     for (const p of photos.values()) {
-      const keep = !p.removed || isUsed(p.id);
+      const keep = !p.removed || isReferenced(p.id);
       if (keep && !p.saved) {
         await store.putPhoto({ id: p.id, projectId: project.id, name: p.name, file: p.file, w: p.w, h: p.h });
         p.saved = true;
