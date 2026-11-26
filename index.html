@@ -91,21 +91,8 @@
 
     <aside class="panel inspector" aria-label="Settings">
       <section>
-        <h2>Print size</h2>
-        <div class="row">
-          <label class="grow">Paper
-            <select id="paper"></select>
-          </label>
-          <button class="btn" id="swap-orient" title="Swap portrait / landscape">⇄ Rotate</button>
-        </div>
-        <div class="row">
-          <label class="grow">Width (in)<input id="page-w" type="number" min="1" max="60" step="0.25"></label>
-          <label class="grow">Height (in)<input id="page-h" type="number" min="1" max="60" step="0.25"></label>
-        </div>
-        <label class="row slider"><span class="lbl">Outer margin</span><input id="margin" type="range" min="0" max="1" step="0.01"><output id="margin-out"></output></label>
-        <label class="row slider"><span class="lbl">Gap between</span><input id="gap" type="range" min="0" max="0.6" step="0.01"><output id="gap-out"></output></label>
-        <label class="row slider"><span class="lbl">Corner radius</span><input id="radius" type="range" min="0" max="0.6" step="0.01"><output id="radius-out"></output></label>
-        <div class="row"><span class="lbl">Background</span><span id="page-bg-slot"></span></div>
+        <h2>Page</h2>
+        <button class="btn wide page-summary" id="open-page-settings" type="button"><span id="page-summary">8 × 10 in</span><span class="muted">Change size &amp; spacing ›</span></button>
       </section>
 
       <section>
@@ -142,6 +129,33 @@
       </section>
     </aside>
   </main>
+
+
+  <div id="page-modal" class="modal" hidden role="dialog" aria-modal="true" aria-label="Page settings">
+    <div class="modal-card small">
+      <div class="wz-head"><h2>Page settings</h2><button class="icon-btn" id="page-close" aria-label="Close">✕</button></div>
+      <div class="wz-body">
+      <section>
+        
+        <div class="row">
+          <label class="grow">Paper
+            <select id="paper"></select>
+          </label>
+          <button class="btn" id="swap-orient" title="Swap portrait / landscape">⇄ Rotate</button>
+        </div>
+        <div class="row">
+          <label class="grow">Width (in)<input id="page-w" type="number" min="1" max="60" step="0.25"></label>
+          <label class="grow">Height (in)<input id="page-h" type="number" min="1" max="60" step="0.25"></label>
+        </div>
+        <label class="row slider"><span class="lbl">Outer margin</span><input id="margin" type="range" min="0" max="1" step="0.01"><output id="margin-out"></output></label>
+        <label class="row slider"><span class="lbl">Gap between</span><input id="gap" type="range" min="0" max="0.6" step="0.01"><output id="gap-out"></output></label>
+        <label class="row slider"><span class="lbl">Corner radius</span><input id="radius" type="range" min="0" max="0.6" step="0.01"><output id="radius-out"></output></label>
+        <div class="row"><span class="lbl">Background</span><span id="page-bg-slot"></span></div>
+      </section>
+      </div>
+      <div class="wz-foot"><span class="grow"></span><button class="btn primary" id="page-done">Done</button></div>
+    </div>
+  </div>
 
   <input type="file" id="file-input" accept="image/*" multiple hidden>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

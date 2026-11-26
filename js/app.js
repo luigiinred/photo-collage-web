@@ -2,7 +2,7 @@ import {
   TEMPLATES, applyTemplate, clearContent, collectLeaves, defaultText, findNode, layoutTree,
   removeLeaf, splitLeaf, swapContent,
 } from './geometry.js';
-import { FONTS, chipRect, drawLeaf, drawOverlay, fontString, photoMetrics, scaleRect } from './render.js';
+import { FONTS, chipRect, drawLeaf, drawOverlay, fontString, photoMetrics, rrPath, scaleRect } from './render.js';
 import { createColorField, closePicker } from './colorpicker.js';
 import { clamp, toCss } from './color.js';
 import { withDpi } from './export.js';
@@ -543,6 +543,7 @@ function syncPageControls() {
     $(`#${k}-out`).textContent = fmtIn(p[k]);
   }
   $('#dpi').value = String(p.dpi);
+  $('#page-summary').textContent = `${p.w} × ${p.h} in`;
   bgField.set(p.bg);
   updateExportInfo();
 }
@@ -984,11 +985,12 @@ async function openProject(id) {
 
 // Guided flow ------------------------------------------------------------------------
 const wizard = $('#wizard');
-const wz = { step: 1, w: 8, h: 10, tpl: 'grid-2x2', recs: [] };
+const wz = { step: 1, w: 8, h: 10, tpl: 'grid-2x2', recs: [], margin: 0.24, gap: 0.1, radius: 0, bg: '#ffffff' };
+const defaultSpacing = (w, h) => { const m = Math.min(w, h); return { margin: Math.min(0.5, Math.round(m * 3) / 100), gap: Math.round(m * 1.2) / 100 }; };
 const SIZE_LABELS = { '4x6': 'Standard print', '6x4': 'Standard print', '5x7': 'Small frame', '7x5': 'Small frame', '8x10': 'Classic frame', '10x8': 'Classic frame', '8x8': 'Square', '11x14': 'Large frame', '14x11': 'Large frame', '16x20': 'Poster', '20x16': 'Poster' };
 
 function startWizard() {
-  Object.assign(wz, { step: 1, recs: [] });
+  Object.assign(wz, { step: 1, recs: [], radius: 0, bg: '#ffffff' });
   photos.clear();
   wizard.hidden = false;
   renderWizard();
@@ -998,13 +1000,13 @@ const closeWizard = () => { wizard.hidden = true; };
 function renderWizard() {
   const body = $('#wz-body');
   body.innerHTML = '';
-  const titles = ['Pick a print size', 'Choose a layout', 'Add your photos'];
+  const titles = ['Pick a print size', 'Set spacing and background', 'Choose a layout', 'Add your photos'];
   $('#wz-title').textContent = titles[wz.step - 1];
   $('#wz-steps').innerHTML = '';
-  ['Size', 'Layout', 'Photos'].forEach((label, i) => $('#wz-steps').append(el('li', { class: i + 1 === wz.step ? 'on' : i + 1 < wz.step ? 'done' : '' }, `${i + 1}. ${label}`)));
+  ['Size', 'Style', 'Layout', 'Photos'].forEach((label, i) => $('#wz-steps').append(el('li', { class: i + 1 === wz.step ? 'on' : i + 1 < wz.step ? 'done' : '' }, `${i + 1}. ${label}`)));
   $('#wz-back').hidden = wz.step === 1;
-  $('#wz-skip').hidden = wz.step !== 3;
-  $('#wz-next').textContent = wz.step === 3 ? (wz.recs.length ? 'Create collage' : 'Create empty collage') : 'Next';
+  $('#wz-skip').hidden = wz.step !== 4;
+  $('#wz-next').textContent = wz.step === 4 ? (wz.recs.length ? 'Create collage' : 'Create empty collage') : 'Next';
 
   if (wz.step === 1) {
     const grid = el('div', { class: 'size-grid' });
@@ -1023,6 +1025,26 @@ function renderWizard() {
     body.append(el('div', { class: 'custom-size' }, el('label', {}, 'Custom width (in)', wi), el('label', {}, 'Height (in)', hi),
       isCustom && el('span', { class: 'muted' }, 'Custom size selected')));
   } else if (wz.step === 2) {
+    const prev = document.createElement('canvas');
+    const drawPrev = () => {
+      const k = 190 / Math.max(wz.w, wz.h), dpr = 2;
+      prev.width = Math.round(wz.w * k * dpr); prev.height = Math.round(wz.h * k * dpr);
+      prev.style.width = `${prev.width / dpr}px`; prev.style.height = `${prev.height / dpr}px`;
+      const g = prev.getContext('2d');
+      g.fillStyle = toCss(wz.bg); g.fillRect(0, 0, prev.width, prev.height);
+      const lay = layoutTree(TEMPLATES.find((t) => t.id === 'grid-2x2').build(), { x: wz.margin, y: wz.margin, w: wz.w - wz.margin * 2, h: wz.h - wz.margin * 2 }, wz.gap);
+      g.fillStyle = '#b7bbf0';
+      for (const { rect } of lay.leaves) { rrPath(g, rect.x * k * dpr, rect.y * k * dpr, rect.w * k * dpr, rect.h * k * dpr, wz.radius * k * dpr); g.fill(); }
+    };
+    const bg = createColorField({ value: wz.bg, label: 'Background color', onInput: (v) => { wz.bg = v; drawPrev(); }, onChange: (v) => { wz.bg = v; drawPrev(); } });
+    const sl = (label, key, max) => sliderRow(label, { min: 0, max, step: 0.01, value: wz[key], format: fmtIn }, (v) => { wz[key] = v; drawPrev(); });
+    body.append(el('div', { class: 'style-wrap' },
+      el('div', {}, sl('Outer margin', 'margin', 1), sl('Gap between', 'gap', 0.6), sl('Corner radius', 'radius', 0.6),
+        el('div', { class: 'row center' }, el('span', { class: 'lbl' }, 'Background'), bg.el),
+        el('p', { class: 'muted' }, 'You can change these any time from Page settings in the editor.')),
+      el('div', { class: 'style-preview' }, prev)));
+    drawPrev();
+  } else if (wz.step === 3) {
     const grid = el('div', { class: 'lay-grid' });
     const tw = 84, th = Math.round(clamp(tw * (wz.h / wz.w), 50, 130)), tw2 = Math.round(th * (wz.w / wz.h));
     for (const tpl of TEMPLATES) {
@@ -1062,10 +1084,9 @@ const orderedCountFor = (id) => collectLeaves(TEMPLATES.find((t) => t.id === id)
 
 async function finishWizard() {
   const { w, h } = wz;
-  const m = Math.min(w, h);
   const tpl = TEMPLATES.find((t) => t.id === wz.tpl);
   Object.assign(project, { id: uuid(), name: `${w} × ${h} collage`, created: Date.now() });
-  state.page = { w, h, dpi: 300, margin: Math.min(0.5, Math.round(m * 3) / 100), gap: Math.round(m * 1.2) / 100, radius: 0, bg: '#ffffff' };
+  state.page = { w, h, dpi: 300, margin: wz.margin, gap: wz.gap, radius: wz.radius, bg: wz.bg };
   state.root = tpl.build();
   state.selectedId = null;
   $('#project-name').value = project.name;
@@ -1079,12 +1100,21 @@ async function finishWizard() {
   await saveNow();
 }
 
-$('#wz-next').addEventListener('click', () => { if (wz.step < 3) { wz.step++; renderWizard(); } else finishWizard(); });
+$('#wz-next').addEventListener('click', () => {
+  if (wz.step === 1) Object.assign(wz, defaultSpacing(wz.w, wz.h));
+  if (wz.step < 4) { wz.step++; renderWizard(); } else finishWizard();
+});
 $('#wz-skip').addEventListener('click', () => { wz.recs = []; photos.clear(); finishWizard(); });
 $('#wz-back').addEventListener('click', () => { wz.step--; renderWizard(); });
 $('#wz-close').addEventListener('click', closeWizard);
 wizard.addEventListener('pointerdown', (e) => { if (e.target === wizard) closeWizard(); });
 for (const id of ['#new-collage', '#new-top', '#new-empty']) $(id).addEventListener('click', startWizard);
+const pageModal = $('#page-modal');
+const closePageModal = () => { closePicker(); pageModal.hidden = true; };
+$('#open-page-settings').addEventListener('click', () => { pageModal.hidden = false; });
+$('#page-done').addEventListener('click', closePageModal);
+$('#page-close').addEventListener('click', closePageModal);
+pageModal.addEventListener('pointerdown', (e) => { if (e.target === pageModal) closePageModal(); });
 $('#go-home').addEventListener('click', goHome);
 $('#brand').addEventListener('click', () => { if (document.body.dataset.view === 'editor') goHome(); });
 $('#project-name').addEventListener('input', (e) => { project.name = e.target.value; scheduleSave(); });

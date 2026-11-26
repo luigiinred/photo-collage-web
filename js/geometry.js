@@ -168,20 +168,15 @@ const grid = (cols, rows) => V(Array.from({ length: rows }, () => H(Array.from({
 
 export const TEMPLATES = [
   { id: 'single', name: 'Single', build: () => L() },
-  { id: 'two-cols', name: 'Two across', build: () => H([L(), L()]) },
-  { id: 'two-rows', name: 'Two stacked', build: () => V([L(), L()]) },
-  { id: 'three-cols', name: 'Three across', build: () => H([L(), L(), L()]) },
-  { id: 'three-rows', name: 'Three stacked', build: () => V([L(), L(), L()]) },
-  { id: 'grid-2x2', name: '2 × 2 grid', build: () => grid(2, 2) },
-  { id: 'grid-2x3', name: '2 × 3 grid', build: () => grid(2, 3) },
-  { id: 'grid-3x3', name: '3 × 3 grid', build: () => grid(3, 3) },
-  { id: 'hero-left', name: 'Hero + 2', build: () => H([L(), V([L(), L()])], [2, 1]) },
-  { id: 'hero-top', name: 'Hero + 3', build: () => V([L(), H([L(), L(), L()])], [2, 1]) },
-  { id: 'feature-3', name: 'Feature + 3', build: () => H([L(), V([L(), L(), L()])], [2, 1]) },
-  { id: 'hero-grid', name: 'Hero + 4', build: () => H([L(), grid(2, 2)]) },
-  { id: 'mosaic', name: 'Mosaic', build: () => H([V([L(), L()]), L(), V([L(), L()])], [1, 1.4, 1]) },
-  { id: 'caption', name: 'Photo + caption', build: () => V([L(), textLeaf('Caption')], [6, 1]) },
-  { id: 'strip-4', name: 'Photo strip', build: () => V([L(), L(), L(), L()]) },
+  { id: 'duo', name: 'Duo 60/40', build: () => H([L(), L()], [3, 2]) },
+  { id: 'grid-2x2', name: 'Classic 2 × 2', build: () => grid(2, 2) },
+  { id: 'offset-2x2', name: 'Offset four', build: () => V([H([L(), L()], [2, 1]), H([L(), L()], [1, 2])]) },
+  { id: 'magazine', name: 'Magazine', build: () => H([L(), V([L(), L()], [3, 2])], [3, 2]) },
+  { id: 'hero-strip', name: 'Hero + strip', build: () => V([L(), H([L(), L(), L(), L()])], [3, 1]) },
+  { id: 'center-hero', name: 'Center hero', build: () => H([V([L(), L()], [3, 2]), L(), V([L(), L()], [2, 3])], [1, 2, 1]) },
+  { id: 'staggered', name: 'Staggered five', build: () => H([V([L(), L()], [3, 2]), V([L(), L(), L()], [2, 3, 2])]) },
+  { id: 'gallery', name: 'Gallery six', build: () => V([H([L(), L(), L()], [2, 1, 1]), H([L(), L(), L()], [1, 1, 2])]) },
+  { id: 'caption', name: 'Photo + caption', build: () => V([L(), textLeaf('Caption')], [7, 1]) },
 ];
 
 export function applyTemplate(oldRoot, tpl) {
