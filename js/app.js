@@ -397,17 +397,22 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // Selection --------------------------------------------------------------
 const isCompact = () => window.matchMedia('(max-width: 960px)').matches;
-function setMobileTab(tab) {
-  document.body.dataset.mtab = tab;
-  for (const b of document.querySelectorAll('.mtabs button')) b.setAttribute('aria-pressed', String(b.dataset.tab === tab));
+function openSheet(mode) {
+  document.body.dataset.sheet = mode;
+  $('#sheet-title').textContent = mode === 'edit' ? 'Adjust cell' : 'More';
+  $('.inspector').scrollTop = 0;
 }
-for (const b of document.querySelectorAll('.mtabs button')) b.addEventListener('click', () => setMobileTab(b.dataset.tab));
-setMobileTab('photos');
+function closeSheet() {
+  closePicker();
+  delete document.body.dataset.sheet;
+}
+$('#more-btn').addEventListener('click', () => openSheet('more'));
+$('#sheet-close').addEventListener('click', closeSheet);
+$('#sheet-backdrop').addEventListener('click', closeSheet);
 
 function selectLeaf(id) {
   if (state.selectedId === id) return;
   state.selectedId = id;
-  if (id && isCompact() && document.body.dataset.mtab !== 'photos') setMobileTab('edit');
   renderCellPanel();
   requestRender();
 }
@@ -516,6 +521,7 @@ fileInput.addEventListener('change', async () => {
 function renderTray() {
   const wrap = $('#thumbs');
   wrap.innerHTML = '';
+  wrap.append(el('button', { type: 'button', class: 'thumb-add', 'aria-label': 'Add photos', onClick: () => openFilePicker(state.selectedId && isEmptyLeaf(selectedLeaf() ?? {}) ? state.selectedId : null) }, '+'));
   const list = [...photos.values()].filter((p) => !p.removed);
   $('#tray-empty').hidden = list.length > 0;
   for (const p of list) {
@@ -775,7 +781,33 @@ function updateResolutionBadge() {
   badge.textContent = `${ppi} PPI in print${ppi < 150 ? ' · may look soft' : ''}`;
 }
 
+function renderCellBar(leaf) {
+  const bar = $('#cellbar');
+  bar.innerHTML = '';
+  bar.hidden = !leaf;
+  if (!leaf) return;
+  const change = () => { renderCellPanel(); requestRender(); renderTray(); commit(); };
+  const btn = (label, onClick, cls = 'btn') => el('button', { class: cls, type: 'button', onClick }, label);
+  const hasPhoto = leaf.type === 'photo' && photos.has(leaf.photoId);
+  const multiple = orderedLeaves().length > 1;
+  const split = (dir) => { const r = splitLeaf(state.root, leaf.id, dir); state.root = r.root; state.selectedId = r.newId; change(); };
+  if (hasPhoto) {
+    bar.append(btn('Adjust…', () => openSheet('edit'), 'btn primary'), btn('Replace', () => openFilePicker(leaf.id)),
+      btn('⟳ Rotate', () => { leaf.rot = (leaf.rot + 90) % 360; change(); }),
+      btn(leaf.fit === 'fit' ? 'Fill' : 'Fit', () => { leaf.fit = leaf.fit === 'fit' ? 'fill' : 'fit'; change(); }));
+  } else if (leaf.type === 'text') {
+    bar.append(btn('Edit text…', () => { openSheet('edit'); setTimeout(() => $('#cell-body textarea')?.focus(), 250); }, 'btn primary'));
+  } else {
+    bar.append(btn('+ Photo', () => openFilePicker(leaf.id), 'btn primary'),
+      btn('+ Text', () => { Object.assign(leaf, { type: 'text', photoId: null, text: leaf.text ?? defaultText() }); change(); }));
+  }
+  bar.append(btn('Split ↔', () => split('h')), btn('Split ↕', () => split('v')));
+  if (leaf.type !== 'empty') bar.append(btn('Clear', () => { clearContent(leaf); change(); }));
+  if (multiple) bar.append(btn('Delete', () => { const r = removeLeaf(state.root, leaf.id); state.root = r.root; state.selectedId = r.next ?? null; change(); }, 'btn danger'));
+}
+
 function renderCellPanel() {
+  renderCellBar(selectedLeaf());
   const body = $('#cell-body');
   closePicker();
   body.innerHTML = '';
@@ -937,6 +969,8 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     clearContent(selectedLeaf());
     renderCellPanel(); renderTray(); requestRender(); commit();
+  } else if (e.key === 'Escape' && document.body.dataset.sheet) {
+    closeSheet();
   } else if (e.key === 'Escape' && !typing) {
     selectLeaf(null);
   }
@@ -1011,7 +1045,8 @@ function resetHistory() {
 function showView(v) {
   document.body.dataset.view = v;
   closePicker();
-  if (v === 'editor') { setMobileTab(photos.size ? 'edit' : 'photos'); resizeStage(); } else { renderHome(); }
+  closeSheet();
+  if (v === 'editor') { resizeStage(); } else { renderHome(); }
 }
 
 async function goHome() {

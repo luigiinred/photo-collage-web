@@ -31,6 +31,9 @@
       <button class="icon-btn editor-only" id="redo" title="Redo (Shift+Ctrl/Cmd+Z)" aria-label="Redo" disabled>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg>
       </button>
+      <button class="icon-btn editor-only compact-only" id="more-btn" aria-label="More options" title="More">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
       <button class="btn primary editor-only" id="download-top">Download</button>
     </div>
   </header>
@@ -88,14 +91,11 @@
       <p class="stage-hint">Click a cell to edit · drag a photo to reposition · scroll to zoom · drag a gap to resize it, or its end dots to angle it · use the ⋮⋮ handle to swap cells</p>
     </section>
 
-    <nav class="mtabs" aria-label="Editor panels">
-      <button type="button" data-tab="photos">Photos</button>
-      <button type="button" data-tab="layout">Layout</button>
-      <button type="button" data-tab="edit">Edit</button>
-      <button type="button" data-tab="download">Download</button>
-    </nav>
+    <div id="cellbar" class="cellbar" hidden></div>
+    <div id="sheet-backdrop" class="sheet-backdrop"></div>
 
     <aside class="panel inspector" aria-label="Settings">
+      <div class="sheet-head"><b id="sheet-title">More</b><button class="modal-close" id="sheet-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
       <section data-tab="layout">
         <h2>Page</h2>
         <button class="btn wide page-summary" id="open-page-settings" type="button"><span id="page-summary">8 × 10 in</span><span class="muted">Change size &amp; spacing ›</span></button>
