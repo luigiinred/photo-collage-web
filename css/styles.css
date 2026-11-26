@@ -337,3 +337,7 @@ body[data-view=editor] .home-only, body[data-view=editor] .home { display: none 
   body[data-view=editor] .toast { bottom: calc(150px + env(safe-area-inset-bottom)); }
   .tray, .cellbar, .thumbs { overscroll-behavior: contain; }
 }
+
+.install-hint { display: flex; align-items: center; gap: 12px; justify-content: space-between; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 12px; line-height: 1.5; }
+.install-hint svg { vertical-align: -3px; }
+@media (display-mode: standalone) { .install-hint { display: none !important; } }

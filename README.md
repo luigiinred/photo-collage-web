@@ -15,6 +15,10 @@ A free, single-page web app for making print-ready photo collages. Everything ru
 
 Collages are saved automatically in your browser (IndexedDB) so you can come back to **My collages**, reopen them, and download again.
 
+## Install on iPhone or iPad
+
+Open the site in Safari, tap **Share**, then **Add to Home Screen**. It opens full screen like an app and works offline after the first visit.
+
 ## Development
 
 No build step. Serve the folder and open it:

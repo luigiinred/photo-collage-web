@@ -1042,19 +1042,37 @@ function resetHistory() {
   commit();
 }
 
-function showView(v) {
+function showView(v, { push = true } = {}) {
   document.body.dataset.view = v;
+  if (v === 'editor' && push && project.id) {
+    const url = `#c/${project.id}`;
+    if (window.history.state?.view === 'editor') window.history.replaceState({ view: 'editor' }, '', url);
+    else window.history.pushState({ view: 'editor' }, '', url);
+  }
   closePicker();
   closeSheet();
   if (v === 'editor') { resizeStage(); } else { renderHome(); }
 }
 
-async function goHome() {
+async function goHome(fromHistory = false) {
   clearTimeout(commitTimer);
   if (project.id) { commit(); await saveNow(); }
   project.id = null;
   showView('home');
+  if (!fromHistory && window.history.state?.view === 'editor') window.history.back();
+  else if (location.hash) window.history.replaceState(null, '', location.pathname + location.search);
 }
+window.addEventListener('hashchange', () => {
+  const m = location.hash.match(/^#c\/(.+)$/);
+  if (m && document.body.dataset.view === 'home') {
+    window.history.replaceState(null, '', location.pathname + location.search);
+    openProject(decodeURIComponent(m[1]));
+  }
+});
+window.addEventListener('popstate', () => {
+  if (document.body.dataset.sheet) closeSheet();
+  if (document.body.dataset.view === 'editor' && window.history.state?.view !== 'editor') goHome(true);
+});
 
 let homeToken = 0;
 async function renderHome() {
@@ -1272,7 +1290,21 @@ commit();
 new ResizeObserver(resizeStage).observe($('#stage-inner'));
 window.addEventListener('resize', resizeStage);
 document.fonts?.ready.then(requestRender);
-store.isAvailable().then((ok) => { storageOk = ok; showView('home'); });
+const startHash = location.hash.match(/^#c\/(.+)$/);
+if (startHash) window.history.replaceState(null, '', location.pathname + location.search);
+store.isAvailable().then((ok) => {
+  storageOk = ok;
+  if (ok && startHash) openProject(decodeURIComponent(startHash[1]));
+  else showView('home');
+});
 showView('home');
+
+const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+if (IS_IOS && !standalone && localStorage.getItem('collage.installHint') !== 'dismissed') $('#install-hint').hidden = false;
+$('#install-dismiss').addEventListener('click', () => {
+  $('#install-hint').hidden = true;
+  try { localStorage.setItem('collage.installHint', 'dismissed'); } catch { /* storage unavailable */ }
+});
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 
 window.__collage = { state, photos, addFiles, placePhotos, orderedLeaves, project };
