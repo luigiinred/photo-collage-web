@@ -396,9 +396,18 @@ canvas.addEventListener('wheel', (e) => {
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // Selection --------------------------------------------------------------
+const isCompact = () => window.matchMedia('(max-width: 960px)').matches;
+function setMobileTab(tab) {
+  document.body.dataset.mtab = tab;
+  for (const b of document.querySelectorAll('.mtabs button')) b.setAttribute('aria-pressed', String(b.dataset.tab === tab));
+}
+for (const b of document.querySelectorAll('.mtabs button')) b.addEventListener('click', () => setMobileTab(b.dataset.tab));
+setMobileTab('photos');
+
 function selectLeaf(id) {
   if (state.selectedId === id) return;
   state.selectedId = id;
+  if (id && isCompact() && document.body.dataset.mtab !== 'photos') setMobileTab('edit');
   renderCellPanel();
   requestRender();
 }
@@ -1002,7 +1011,7 @@ function resetHistory() {
 function showView(v) {
   document.body.dataset.view = v;
   closePicker();
-  if (v === 'editor') { resizeStage(); } else { renderHome(); }
+  if (v === 'editor') { setMobileTab(photos.size ? 'edit' : 'photos'); resizeStage(); } else { renderHome(); }
 }
 
 async function goHome() {
@@ -1207,7 +1216,7 @@ $('#wz-skip').addEventListener('click', () => { wz.recs = []; photos.clear(); fi
 $('#wz-back').addEventListener('click', () => goStep(wz.step - 1));
 $('#wz-close').addEventListener('click', closeWizard);
 wizard.addEventListener('pointerdown', (e) => { if (e.target === wizard) closeWizard(); });
-for (const id of ['#new-collage', '#new-top', '#new-empty']) $(id).addEventListener('click', startWizard);
+for (const id of ['#new-collage', '#new-empty']) $(id).addEventListener('click', startWizard);
 const pageModal = $('#page-modal');
 const closePageModal = () => { closePicker(); pageModal.hidden = true; };
 $('#open-page-settings').addEventListener('click', () => { pageModal.hidden = false; });
